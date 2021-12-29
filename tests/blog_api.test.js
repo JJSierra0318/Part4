@@ -1,19 +1,32 @@
 const supertest = require('supertest')
 const mongoose = require('mongoose')
 const app = require('../app')
-const Blog =require('../models/blog')
 const helper = require('./test_helper')
 const api = supertest(app)
+const bcrypt = require('bcrypt')
+const Blog = require('../models/blog')
+const User = require('../models/user')
+jest.setTimeout(10000)
 
+//Blog tests
 describe ('when there is initially some blogs saved', () => {
 
   beforeEach(async () => {
+    await User.deleteMany({})
     await Blog.deleteMany({})
 
-    const blogObject = helper.initialBlogs
-      .map(blog => new Blog(blog))
-    const promiseArray = blogObject.map(blog => blog.save())
-    await Promise.all(promiseArray)
+    const passwordHash = await bcrypt.hash('passw0rd', 10)
+    const user = new User({ username: 'firstUser', passwordHash })
+    await user.save()
+
+    await Blog.insertMany(helper.initialBlogs)
+
+    const savedUsers = await helper.usersInDb()
+    const savedBlogs = await helper.blogsInDb()
+
+    const firstBlogId = savedBlogs[0].id
+
+    await Blog.findByIdAndUpdate(firstBlogId, {user: savedUsers[0].id}, {new: true})
   })
 
   test('notes are returned as JSON', async () => {
@@ -44,6 +57,14 @@ describe ('when there is initially some blogs saved', () => {
   describe('adding a new blog', () => {
 
     test('is succesfull when data is valid', async () => {
+
+      const login = await api
+        .post('/api/login')
+        .send({ username: 'firstUser', password: 'passw0rd' })
+        .expect(200)
+
+      const token = login.body.token
+
       const newBlog = {
         title: 'Third Blog Saved',
         author: 'Juan José Mejía',
@@ -53,6 +74,7 @@ describe ('when there is initially some blogs saved', () => {
 
       await api
         .post('/api/blogs')
+        .set('Authorization', 'Bearer ' + token)
         .send(newBlog)
         .expect(200)
         .expect('Content-Type', /application\/json/)
@@ -67,6 +89,14 @@ describe ('when there is initially some blogs saved', () => {
     })
 
     test('without likes component', async () => {
+
+      const login = await api
+        .post('/api/login')
+        .send({ username: 'firstUser', password: 'passw0rd' })
+        .expect(200)
+
+      const token = login.body.token
+
       const newBlog = {
         title: 'Third Blog Saved',
         author: 'Juan José Mejía',
@@ -75,6 +105,7 @@ describe ('when there is initially some blogs saved', () => {
 
       await api
         .post('/api/blogs')
+        .set('Authorization', 'Bearer ' + token)
         .send(newBlog)
         .expect(200)
         .expect('Content-Type', /application\/json/)
@@ -89,6 +120,13 @@ describe ('when there is initially some blogs saved', () => {
     })
 
     test('fails with status code 400 if data is invalid', async () => {
+      const login = await api
+        .post('/api/login')
+        .send({ username: 'firstUser', password: 'passw0rd' })
+        .expect(200)
+
+      const token = login.body.token
+
       const newBlog = {
         url: 'https://examplethree.com',
         likes: 1
@@ -96,8 +134,25 @@ describe ('when there is initially some blogs saved', () => {
 
       await api
         .post('/api/blogs')
+        .set('Authorization', 'Bearer ' + token)
         .send(newBlog)
         .expect(400)
+
+      const blogsAtEnd = await helper.blogsInDb()
+      expect(blogsAtEnd.length).toBe(helper.initialBlogs.length)
+    })
+
+    test('fails if the user is not logged in', async () => {
+      const newBlog = {
+        title: 'A new Blog',
+        author: 'Juan José S',
+        url: 'https://examplethree.com',
+      }
+
+      await api
+        .post('/api/blogs')
+        .send(newBlog)
+        .expect(401)
 
       const blogsAtEnd = await helper.blogsInDb()
       expect(blogsAtEnd.length).toBe(helper.initialBlogs.length)
@@ -107,24 +162,53 @@ describe ('when there is initially some blogs saved', () => {
   describe('removing a blog', () => {
     
     test('succeeds with status code 204 if id is valid', async () => {
+      const login = await api
+        .post('/api/login')
+        .send({ username: 'firstUser', password: 'passw0rd' })
+        .expect(200)
+
+      const token = login.body.token
+
       const blogsAtStart = await helper.blogsInDb()
       const blogToDelete = blogsAtStart[0]
+
       await api
         .delete(`/api/blogs/${blogToDelete.id}`)
+        .set('Authorization', 'Bearer ' + token)
         .expect(204)
 
       const blogsAtEnd = await helper.blogsInDb()
       expect(blogsAtEnd.length).toBe(blogsAtStart.length - 1)
     })
 
-    test('fails with status code 400 if is is invalid', async () => {
+    test('fails with status code 400 if id is invalid', async () => {
+      const login = await api
+        .post('/api/login')
+        .send({ username: 'firstUser', password: 'passw0rd' })
+        .expect(200)
+
+      const token = login.body.token
+
       const invalidId = await helper.nonExistingId()
       await api
         .delete(`/api/blogs/${invalidId}`)
-        .expect(204)
+        .set('Authorization', 'Bearer ' + token)
+        .expect(400)
       
       const blogsAtEnd = await helper.blogsInDb()
       expect(blogsAtEnd.length).toBe(helper.initialBlogs.length)
+    })
+
+    test('fails when the user has no token', async () => {
+      const blogsAtStart = await helper.blogsInDb()
+      const blogToDelete = blogsAtStart[0]
+
+      await api
+        .delete(`/api/blogs/${blogToDelete.id}`)
+        .expect(401)
+
+      const blogsAtEnd = await helper.blogsInDb()
+      expect(blogsAtEnd.length).toBe(blogsAtStart.length)
     })
   })
 
@@ -162,6 +246,100 @@ describe ('when there is initially some blogs saved', () => {
   })
 })
 
+//Users tests
+describe('when there is initially one user at db', () => {
+  beforeEach(async () => {
+    await User.deleteMany({})
+
+    const passwordHash = await bcrypt.hash('passw0rd', 10)
+    const user = new User({ username: 'firstUser', passwordHash })
+
+    await user.save()
+  })
+
+  test('creation succeeds with a fresh username ', async () => {
+    const usersAtStar = await helper.usersInDb()
+
+    const newUser = {
+      username: 'SecondUser',
+      name: 'LittleV',
+      password: 'passw1rd'
+    }
+
+    await api
+      .post('/api/users')
+      .send(newUser)
+      .expect(200)
+      .expect('Content-Type', /application\/json/)
+
+    const usersAtEnd = await helper.usersInDb()
+    expect(usersAtEnd.length).toBe(usersAtStar.length + 1)
+
+    const usernames = usersAtEnd.map(user => user.username)
+    expect(usernames).toContain(newUser.username)
+  })
+
+  test('creation fails if username is already taken', async () => {
+    const usersAtStart = await helper.usersInDb()
+
+    const newUser = {
+      username: 'firstUser',
+      name: 'sometihgCreative',
+      password: 'passw2rd'
+    }
+
+    const result = await api
+      .post('/api/users')
+      .send(newUser)
+      .expect(400)
+      .expect('Content-Type', /application\/json/)
+
+    expect(result.body.error).toContain('`username` to be unique')
+
+    const usersAtEnd = await helper.usersInDb()
+    expect(usersAtEnd.length).toBe(usersAtStart.length)
+  })
+
+  test('creation fails if username is missing', async () => {
+    const usersAtStart = await helper.usersInDb()
+
+    const newUser = {
+      name: 'thisWillFail',
+      password: 'passw2rd'
+    }
+
+    const result = await api
+      .post('/api/users')
+      .send(newUser)
+      .expect(400)
+      .expect('Content-Type', /application\/json/)
+
+    expect(result.body.error).toContain('Path `username` is required')
+
+    const usersAtEnd = await helper.usersInDb()
+    expect(usersAtEnd.length).toBe(usersAtStart.length)
+  })
+
+  test('creation fails if password is missing', async () => {
+    const usersAtStart = await helper.usersInDb()
+
+    const newUser = {
+      username: 'nowThePasswordIsMissing',
+      name: 'thisWillFail',
+    }
+
+    const result = await api
+      .post('/api/users')
+      .send(newUser)
+      .expect(400)
+      .expect('Content-Type', /application\/json/)
+
+    expect(result.body.error).toContain('Path `password` is required')
+
+    const usersAtEnd = await helper.usersInDb()
+    expect(usersAtEnd.length).toBe(usersAtStart.length)
+  })
+})
 
 afterAll(() => {
   mongoose.connection.close()

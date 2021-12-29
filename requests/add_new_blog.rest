@@ -1,9 +1,11 @@
 POST http://localhost:3003/api/blogs
 Content-Type: application/json
+Authorization: bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6InJvb3Ryb290IiwiaWQiOiI2MWNiYzc4ZWYzN2M2MGQ2ZjkyYWNkMWYiLCJpYXQiOjE2NDA3NDUxMjksImV4cCI6MTY0MDc0ODcyOX0.qx2J3aWtij2VB9pcJSwCZwwLgDb41SWDG-PADmSytAI
 
 {
   "title": "First blog registered",
-  "author": "Juan José Sierra",
+  "author": "rootroot",
   "url": "https://example.com",
-  "likes": 7
+  "likes": 7,
+  "userId": "61cbc78ef37c60d6f92acd1f"
 }
